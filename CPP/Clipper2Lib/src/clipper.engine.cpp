@@ -1038,6 +1038,10 @@ namespace Clipper2Lib {
 
   void InsertRightEdge(Active& e, Active& e2)
   {
+      //   e2
+      //   |       ->
+      //   v       ->
+      // e -> e3       e -> e2 -> e3
     e2.next_in_ael = e.next_in_ael;
     if (e.next_in_ael) e.next_in_ael->prev_in_ael = &e2;
     e2.prev_in_ael = &e;
