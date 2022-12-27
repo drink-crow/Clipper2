@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
-* Date      :  21 November 2022                                                *
+* Date      :  3 December 2022                                                 *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2022                                         *
 * Purpose   :  Core Clipper Library structures and functions                   *
@@ -424,6 +424,10 @@ namespace Clipper2Lib
 
     bool Intersects(const Rect<T>& rec) const
     {
+      // nb: if you get compile errors here, then it's almost certainly
+      // due to including windows.h before including this header.
+      // To fix this, add #define NOMINMAX just above where you
+      // #include <windows.h> in you own code.
       return (std::max(left, rec.left) < std::min(right, rec.right)) &&
         (std::max(top, rec.top) < std::min(bottom, rec.bottom));
     };

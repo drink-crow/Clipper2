@@ -1,6 +1,6 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
-* Date      :  19 November 2022                                                *
+* Date      :  15 December 2022                                                *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2022                                         *
 * Purpose   :  This is the main polygon clipping module                        *
@@ -17,8 +17,8 @@ constexpr auto CLIPPER2_VERSION = "1.0.6";
 #include <stdexcept>
 #include <vector>
 #include <functional>
-#include <memory>
 #include "clipper.core.h"
+#include <memory>
 
 namespace Clipper2Lib {
 
@@ -28,12 +28,12 @@ namespace Clipper2Lib {
 	struct Vertex;
 	struct LocalMinima;
 	struct OutRec;
-	struct Joiner;
 
 	//Note: all clipping operations except for Difference are commutative.
 	enum class ClipType { None, Intersection, Union, Difference, Xor };
 	
 	enum class PathType { Subject, Clip };
+	enum class JoinWith { None, Left, Right };
 
 	enum class VertexFlags : uint32_t {
 		None = 0, OpenStart = 1, OpenEnd = 2, LocalMax = 4, LocalMin = 8
@@ -44,7 +44,7 @@ namespace Clipper2Lib {
 		return (enum VertexFlags)(uint32_t(a) & uint32_t(b));
 	}
 
-	constexpr enum VertexFlags operator |(enum VertexFlags a, enum VertexFlags b) 
+	constexpr enum VertexFlags operator |(enum VertexFlags a, enum VertexFlags b)
 	{
 		return (enum VertexFlags)(uint32_t(a) | uint32_t(b));
 	}
@@ -61,7 +61,6 @@ namespace Clipper2Lib {
 		OutPt*	next = nullptr;
 		OutPt*	prev = nullptr;
 		OutRec* outrec;
-		Joiner* joiner = nullptr;
 
 		OutPt(const Point64& pt_, OutRec* outrec_): pt(pt_), outrec(outrec_) {
 			next = this;
@@ -83,7 +82,6 @@ namespace Clipper2Lib {
 	struct OutRec {
 		size_t idx = 0;
 		OutRec* owner = nullptr;
-		OutRecList* splits = nullptr;
 		Active* front_edge = nullptr;
 		Active* back_edge = nullptr;
 		OutPt* pts = nullptr;
@@ -91,7 +89,7 @@ namespace Clipper2Lib {
 		Rect64 bounds = {};
 		Path64 path;
 		bool is_open = false;
-		~OutRec() { if (splits) delete splits; };
+		bool horz_done = false;
 	};
 
 	///////////////////////////////////////////////////////////////////
@@ -123,6 +121,7 @@ namespace Clipper2Lib {
 		Vertex* vertex_top = nullptr;
 		LocalMinima* local_min = nullptr;  // the bottom of an edge 'bound' (also Vatti)
 		bool is_left_bound = false;
+		JoinWith join_with = JoinWith::None;
 	};
 
 	struct LocalMinima {
@@ -137,11 +136,20 @@ namespace Clipper2Lib {
 		Point64 pt;
 		Active* edge1;
 		Active* edge2;
-		IntersectNode() : pt(Point64(0, 0)), edge1(NULL), edge2(NULL) {}
+		IntersectNode() : pt(Point64(0,0)), edge1(NULL), edge2(NULL) {}
 			IntersectNode(Active* e1, Active* e2, Point64& pt_) :
-			pt(pt_), edge1(e1), edge2(e2)
-		{
-		}
+			pt(pt_), edge1(e1), edge2(e2) {}
+	};
+
+	enum class HorzPosition { Bottom, Middle, Top };
+
+	struct HorzSegment {
+		OutRec* outrec;
+		OutPt* leftOp = nullptr;
+		OutPt* rightOp = nullptr;
+		bool leftToRight = true;
+		HorzPosition position = HorzPosition::Bottom;
+		HorzSegment(OutRec* outrec_ = nullptr) : outrec(outrec_) {};
 	};
 
 #ifdef USINGZ
@@ -164,13 +172,12 @@ namespace Clipper2Lib {
 		bool using_polytree_ = false;
 		Active* actives_ = nullptr;
 		Active *sel_ = nullptr;
-		Joiner *horz_joiners_ = nullptr;
 		std::vector<LocalMinima*> minima_list_;		//pointers in case of memory reallocs
 		std::vector<LocalMinima*>::iterator current_locmin_iter_;
 		std::vector<Vertex*> vertex_lists_;
 		std::priority_queue<int64_t> scanline_list_;
-		std::vector<IntersectNode> intersect_nodes_; 
-		std::vector<Joiner*> joiner_list_;				//pointers in case of memory reallocs
+		std::vector<IntersectNode> intersect_nodes_;
+		std::vector<HorzSegment> horz_seg_list_;
 		void Reset();
 		void InsertScanline(int64_t y);
 		bool PopScanline(int64_t &y);
@@ -202,32 +209,28 @@ namespace Clipper2Lib {
 			const Point64& pt, bool is_new = false);
 		OutPt* AddLocalMaxPoly(Active &e1, Active &e2, const Point64& pt);
 		void DoHorizontal(Active &horz);
-		bool ResetHorzDirection(const Active &horz, const Active *max_pair,
+		bool ResetHorzDirection(const Active &horz, const Vertex* max_vertex,
 			int64_t &horz_left, int64_t &horz_right);
 		void DoTopOfScanbeam(const int64_t top_y);
 		Active *DoMaxima(Active &e);
 		void JoinOutrecPaths(Active &e1, Active &e2);
 		void CompleteSplit(OutPt* op1, OutPt* op2, OutRec& outrec);
 		bool ValidateClosedPathEx(OutPt*& outrec);
-		void CleanCollinear(OutRec* outrec);
 		void FixSelfIntersects(OutRec* outrec);
 		void DoSplitOp(OutRec* outRec, OutPt* splitOp);
-		Joiner* GetHorzTrialParent(const OutPt* op);
-		bool OutPtInTrialHorzList(OutPt* op);
 		void SafeDisposeOutPts(OutPt*& op);
-		void SafeDeleteOutPtJoiners(OutPt* op);
-		void AddTrialHorzJoin(OutPt* op);
-		void DeleteTrialHorzJoin(OutPt* op);
-		void ConvertHorzTrialsToJoins();
-		void AddJoin(OutPt* op1, OutPt* op2);
-		void DeleteJoin(Joiner* joiner);
-		void ProcessJoinerList();
-		OutRec* ProcessJoin(Joiner* joiner);
+		
+		void AddTrialHorzJoin(OutRec* op);
+		void MergeHorzSegments(int64_t curr_y);
+		void Split(Active& e, const Point64& pt);
+		void CheckJoinLeft(Active& e, const Point64& pt);
+		void CheckJoinRight(Active& e, const Point64& pt);
 	protected:
 		bool has_open_paths_ = false;
 		bool succeeded_ = true;
 		std::vector<OutRec*> outrec_list_; //pointers in case list memory reallocated
 		bool ExecuteInternal(ClipType ct, FillRule ft, bool use_polytrees);
+		void CleanCollinear(OutRec* outrec);
 		bool DeepCheckOwner(OutRec* outrec, OutRec* owner);
 #ifdef USINGZ
 		ZCallback64 zCallback_ = nullptr;
@@ -314,7 +317,7 @@ namespace Clipper2Lib {
 			childs_.resize(0);
 		}
 
-		size_t Count() const  override
+		size_t Count() const override
 		{
 			return childs_.size();
 		}
@@ -334,7 +337,7 @@ namespace Clipper2Lib {
 			const size_t level_indent = 4;
 			const size_t coords_per_line = 4;
 			const size_t last_on_line = coords_per_line - 1;
-			unsigned level = polypath.Level();
+			size_t level = static_cast<size_t>(polypath.Level());
 			if (level > 0)
 			{
 				std::string level_padding;
@@ -393,7 +396,7 @@ namespace Clipper2Lib {
 			childs_.resize(0);
 		}
 
-		size_t Count() const  override
+		size_t Count() const override
 		{
 			return childs_.size();
 		}
